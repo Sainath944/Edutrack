@@ -15,9 +15,11 @@ export function VideoPlayer({ url }) {
   const [error, setError] = useState(null);
   const timeUpdateInterval = useRef(null);
   const quizzesRef = useRef([]);
-  const isQuizShownRef = useRef(false);
-  const lastQuizTimeRef = useRef(0);
-  const shownSegmentsRef = useRef(new Set());
+  const [currentQuizIndex, setCurrentQuizIndex] = useState(0);
+  const [quizTimes, setQuizTimes] = useState([]);
+  const [shownQuizzes, setShownQuizzes] = useState(new Set());
+  const [isQuizShown, setIsQuizShown] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
 
   const getVideoId = (url) => {
     if (!url) {
@@ -42,9 +44,14 @@ export function VideoPlayer({ url }) {
   const fetchQuizzes = async () => {
     try {
       setIsGeneratingQuiz(true);
+      
+      // Get the current duration from the player
+      const currentDuration = playerRef.current?.getDuration() || 0;
+      console.log("Current video duration:", currentDuration);
+      
       const requestBody = {
         url: url,
-        duration: Math.ceil(videoDuration / 60).toString()
+        duration: Math.ceil(currentDuration / 60).toString()
       };
       
       console.log("Sending request to /transcribe with:", requestBody);
@@ -84,11 +91,35 @@ export function VideoPlayer({ url }) {
 
         const quizData = await quizResponse.json();
         console.log("Quiz data received:", quizData);
+        
+        // Store the segment quizzes
         const newQuizzes = quizData.segment_quizzes || [];
         setQuizzes(newQuizzes);
         quizzesRef.current = newQuizzes;
-        lastQuizTimeRef.current = 0;
-        shownSegmentsRef.current = new Set();
+        
+        // Calculate quiz times
+        const quizInterval = 600; // 10 minutes in seconds
+        const times = [];
+        
+        // Map each segment quiz to a 10-minute interval
+        for (let i = 0; i < newQuizzes.length; i++) {
+          let quizTime;
+          if (i === newQuizzes.length - 1) {
+            // Last quiz at video end
+            quizTime = currentDuration;
+          } else {
+            // Other quizzes at 10-minute intervals
+            quizTime = quizInterval * (i + 1);
+          }
+          times.push(quizTime);
+          console.log(`Mapped quiz ${i + 1} to time ${quizTime} seconds`);
+        }
+        
+        setQuizTimes(times);
+        setShownQuizzes(new Set());
+        setCurrentQuizIndex(0);
+        
+        console.log("All quiz times calculated:", times);
       }
     } catch (error) {
       console.error("Error fetching quizzes:", error);
@@ -97,25 +128,76 @@ export function VideoPlayer({ url }) {
     }
   };
 
+  const initializePlayer = (videoId) => {
+    playerRef.current = new window.YT.Player(containerRef.current, {
+      height: "100%",
+      width: "100%",
+      videoId: videoId,
+      playerVars: {
+        autoplay: 1,
+        modestbranding: 1,
+        rel: 0,
+        enablejsapi: 1
+      },
+      events: {
+        onReady: (event) => {
+          console.log("Player ready");
+          // Wait a moment for the duration to be available
+          setTimeout(() => {
+            const duration = event.target.getDuration();
+            console.log("Video duration:", duration);
+            setVideoDuration(duration);
+            setIsPlayerReady(true);
+            // Start transcription process immediately when player is ready
+            fetchQuizzes();
+          }, 1000);
+        },
+        onStateChange: (event) => {
+          console.log("Player state changed:", event.data);
+          if (event.data === window.YT.PlayerState.ENDED) {
+            console.log("Video ended, showing final quiz");
+            // Only show the final quiz if it hasn't been shown yet
+            const finalQuizIndex = quizzesRef.current.length - 1;
+            if (finalQuizIndex >= 0 && !shownQuizzes.has(finalQuizIndex)) {
+              showNextQuiz(finalQuizIndex);
+            }
+          }
+        }
+      },
+    });
+
+    // Start tracking video time
+    timeUpdateInterval.current = setInterval(() => {
+      if (playerRef.current && playerRef.current.getCurrentTime) {
+        const time = playerRef.current.getCurrentTime();
+        setCurrentTime(time);
+      }
+    }, 1000); // Check every second
+  };
+
   const showNextQuiz = (segmentIndex) => {
+    console.log("Attempting to show quiz for segment:", segmentIndex);
+    console.log("Current quizzes:", quizzesRef.current);
+    console.log("Shown quizzes:", shownQuizzes);
+    console.log("Is quiz shown:", isQuizShown);
+
     if (quizzesRef.current.length > 0 && 
         segmentIndex < quizzesRef.current.length && 
-        !isQuizShownRef.current && 
-        !shownSegmentsRef.current.has(segmentIndex)) {
+        !isQuizShown && 
+        !shownQuizzes.has(segmentIndex)) {
       
       console.log("Showing quiz for segment:", segmentIndex, "Quiz data:", quizzesRef.current[segmentIndex]);
       
       const segmentQuiz = quizzesRef.current[segmentIndex];
-      if (segmentQuiz && segmentQuiz.questions && segmentQuiz.questions["1"] && segmentQuiz.questions["1"].questions) {
-        const questions = segmentQuiz.questions["1"].questions;
-        console.log("Questions for segment:", segmentIndex, questions);
+      if (segmentQuiz && segmentQuiz.questions) {
+        console.log("Questions for segment:", segmentIndex, segmentQuiz.questions);
         setQuizData({
-          questions: questions,
+          questions: segmentQuiz.questions,
           currentQuestionIndex: 0
         });
         setShowQuiz(true);
-        isQuizShownRef.current = true;
-        shownSegmentsRef.current.add(segmentIndex);
+        setIsQuizShown(true);
+        setShownQuizzes(prev => new Set([...prev, segmentIndex]));
         
         if (playerRef.current) {
           playerRef.current.pauseVideo();
@@ -123,6 +205,22 @@ export function VideoPlayer({ url }) {
       } else {
         console.error("Invalid quiz data structure for segment:", segmentIndex, segmentQuiz);
       }
+    } else {
+      console.log("Quiz not shown because:", {
+        hasQuizzes: quizzesRef.current.length > 0,
+        validIndex: segmentIndex < quizzesRef.current.length,
+        notShown: !isQuizShown,
+        notInShownQuizzes: !shownQuizzes.has(segmentIndex)
+      });
+    }
+  };
+
+  const handleQuizComplete = () => {
+    console.log("Quiz completed");
+    setShowQuiz(false);
+    setIsQuizShown(false);
+    if (playerRef.current) {
+      playerRef.current.playVideo();
     }
   };
 
@@ -131,61 +229,51 @@ export function VideoPlayer({ url }) {
     const videoId = getVideoId(url);
     if (!videoId) return;
 
-    const tag = document.createElement("script");
-    tag.src = "https://www.youtube.com/iframe_api";
-    const firstScriptTag = document.getElementsByTagName("script")[0];
-    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    // Clean up previous player if it exists
+    if (playerRef.current) {
+      playerRef.current.destroy();
+      playerRef.current = null;
+    }
 
-    window.onYouTubeIframeAPIReady = () => {
-      console.log("YouTube API Ready, initializing player...");
-      playerRef.current = new window.YT.Player(containerRef.current, {
-        height: "100%",
-        width: "100%",
-        videoId: videoId,
-        playerVars: {
-          autoplay: 1,
-          modestbranding: 1,
-          rel: 0,
-          enablejsapi: 1
-        },
-        events: {
-          onReady: (event) => {
-            console.log("Player ready");
-            const duration = event.target.getDuration();
-            console.log("Video duration:", duration);
-            setVideoDuration(duration);
-            setIsPlayerReady(true);
+    // Reset states for new video
+    setQuizzes([]);
+    quizzesRef.current = [];
+    setShownQuizzes(new Set());
+    setCurrentQuizIndex(0);
+    setQuizTimes([]);
+    setIsPlayerReady(false);
+    setVideoDuration(0);
+    setIsQuizShown(false);
+    setShowQuiz(false);
+    setQuizData(null);
+    setCurrentTime(0);
 
-            timeUpdateInterval.current = setInterval(() => {
-              if (playerRef.current && playerRef.current.getCurrentTime) {
-                const currentTime = Math.floor(playerRef.current.getCurrentTime());
-                if (currentTime === 600 && !shownSegmentsRef.current.has(0)) {
-                  console.log("10-minute mark reached, showing first quiz");
-                  showNextQuiz(0);
-                }
-              }
-            }, 1000);
-          },
-          onStateChange: (event) => {
-            console.log("Player state changed:", event.data);
-            if (event.data === window.YT.PlayerState.ENDED) {
-              console.log("Video ended, showing next unseen quiz");
-              // Show the next unseen segment's quiz
-              for (let i = 0; i < quizzesRef.current.length; i++) {
-                if (!shownSegmentsRef.current.has(i)) {
-                  showNextQuiz(i);
-                  break;
-                }
-              }
-            }
-          }
-        },
-      });
-    };
+    // Clear any existing interval
+    if (timeUpdateInterval.current) {
+      clearInterval(timeUpdateInterval.current);
+      timeUpdateInterval.current = null;
+    }
+
+    // Check if YouTube API is already loaded
+    if (window.YT) {
+      initializePlayer(videoId);
+    } else {
+      // Load YouTube API if not already loaded
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      const firstScriptTag = document.getElementsByTagName("script")[0];
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+      window.onYouTubeIframeAPIReady = () => {
+        console.log("YouTube API Ready, initializing player...");
+        initializePlayer(videoId);
+      };
+    }
 
     return () => {
       if (timeUpdateInterval.current) {
         clearInterval(timeUpdateInterval.current);
+        timeUpdateInterval.current = null;
       }
       if (playerRef.current) {
         playerRef.current.destroy();
@@ -193,22 +281,20 @@ export function VideoPlayer({ url }) {
     };
   }, [url]);
 
-  // Fetch quizzes after player is ready and duration is known
+  // Add effect to handle quiz timing
   useEffect(() => {
-    if (isPlayerReady && videoDuration > 0) {
-      console.log("Player is ready, fetching quizzes with duration:", videoDuration);
-      fetchQuizzes();
+    if (quizTimes.length > 0 && currentQuizIndex < quizTimes.length) {
+      const nextQuizTime = quizTimes[currentQuizIndex];
+      console.log("Current time:", currentTime, "Next quiz time:", nextQuizTime);
+      
+      // Check if we've passed the next quiz time
+      if (currentTime >= nextQuizTime && !isQuizShown) {
+        console.log("Time to show quiz at:", nextQuizTime);
+        showNextQuiz(currentQuizIndex);
+        setCurrentQuizIndex(prev => prev + 1);
+      }
     }
-  }, [isPlayerReady, videoDuration]);
-
-  const handleQuizComplete = () => {
-    console.log("Quiz completed");
-    setShowQuiz(false);
-    isQuizShownRef.current = false;
-    if (playerRef.current) {
-      playerRef.current.playVideo();
-    }
-  };
+  }, [currentTime, quizTimes, currentQuizIndex, isQuizShown]);
 
   if (error) {
     return (
@@ -240,7 +326,7 @@ export function VideoPlayer({ url }) {
           onComplete={handleQuizComplete}
           onClose={() => {
             setShowQuiz(false);
-            isQuizShownRef.current = false;
+            setIsQuizShown(false);
             if (playerRef.current) {
               playerRef.current.playVideo();
             }

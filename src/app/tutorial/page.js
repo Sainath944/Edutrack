@@ -18,7 +18,7 @@ const MOCK_COURSES = {
       {
         id: "1",
         title: "HTML Basics",
-        url: "https://www.youtube.com/watch?v=FQdaUv95mR8&pp=ygUbaHRtbCB0dXRvcmlhbCBmb3IgYmVnaW5uZXJz",
+        url: "https://www.youtube.com/watch?v=FQdaUv95mR8",
       },
       {
         id: "2",
@@ -38,7 +38,7 @@ const MOCK_COURSES = {
       {
         id: "1",
         title: "ML Fundamentals",
-        url: "https://www.youtube.com/watch?v=_xIwjmCH6D4&pp=ygULbWwgdHV0b3JpYWw%3D",
+        url: "https://www.youtube.com/watch?v=7eh4d6sabA0",
       },
       {
         id: "2",
@@ -48,7 +48,7 @@ const MOCK_COURSES = {
       {
         id: "3",
         title: "Deep Learning",
-        url: "https://www.youtube.com/watch?v=5tvmMX8r_OM",
+        url: "https://www.youtube.com/watch?v=VyWAvY2CF9c",
       },
     ],
   },
@@ -58,18 +58,14 @@ const MOCK_COURSES = {
       {
         id: "1",
         title: "C++ Basics",
-        url: "https://www.youtube.com/watch?v=vLnPwxZdW4Y",
+        url: "https://www.youtube.com/watch?v=ZzaPdXTrSb8",
       },
-      {
-        id: "2",
-        title: "Object-Oriented C++",
-        url: "https://www.youtube.com/watch?v=wN0x9eZLix4",
-      },
-      {
-        id: "3",
-        title: "Advanced C++",
-        url: "https://www.youtube.com/watch?v=18c3MTX0PK0",
-      },
+
+      // {
+      //   id: "2",
+      //   title: "Advanced C++",
+      //   url: "https://www.youtube.com/watch?v=18c3MTX0PK0",
+      // },
     ],
   },
 };
@@ -85,6 +81,7 @@ export default function TutorialPage() {
   const [showQuiz, setShowQuiz] = useState(false);
   const [quizData, setQuizData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [videoKey, setVideoKey] = useState(Date.now());
 
   useEffect(() => {
     const initializeCourse = () => {
@@ -101,6 +98,7 @@ export default function TutorialPage() {
         if (course) {
           setCurrentCourse(course);
           setCurrentVideo(course.videos[0]);
+          setVideoKey(Date.now());
         } else {
           // If category is invalid, redirect to home
           router.push('/');
@@ -110,13 +108,26 @@ export default function TutorialPage() {
     };
 
     initializeCourse();
+
+    return () => {
+      setCurrentCourse(null);
+      setCurrentVideo(null);
+      setVideoKey(Date.now());
+    };
   }, [category, youtubeUrl, router]);
 
   const handleVideoChange = (video) => {
     setCurrentVideo(video);
     setShowQuiz(false);
     setQuizData(null);
+    setVideoKey(Date.now());
   };
+
+  useEffect(() => {
+    if (currentVideo) {
+      setIsLoading(false);
+    }
+  }, [currentVideo]);
 
   const handleQuizReady = () => {
     // Handle quiz ready state if needed
@@ -156,7 +167,16 @@ export default function TutorialPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
-            <VideoPlayer url={currentVideo?.url} />
+            {currentVideo && (
+              <VideoPlayer
+                key={videoKey}
+                url={currentVideo.url}
+                onVideoChange={() => {
+                  setShowQuiz(false);
+                  setQuizData(null);
+                }}
+              />
+            )}
           </div>
 
           <div className="space-y-6">
@@ -172,7 +192,7 @@ export default function TutorialPage() {
                       key={video.id}
                       variant={currentVideo?.id === video.id ? "default" : "ghost"}
                       className="w-full justify-start"
-                      onClick={() => setCurrentVideo(video)}
+                      onClick={() => handleVideoChange(video)}
                     >
                       <BookOpen className="mr-2 h-4 w-4" />
                       {video.title}
@@ -186,7 +206,7 @@ export default function TutorialPage() {
 
         {showQuiz && (
           <QuizModal
-            quiz={currentQuiz}
+            quiz={quizData}
             onComplete={handleQuizComplete}
             onClose={() => setShowQuiz(false)}
           />
