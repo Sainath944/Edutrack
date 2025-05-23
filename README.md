@@ -1,3 +1,6 @@
+this is the frontend of the project have a look at the backend at the repo https://github.com/sainath944/Edutrack-Backend.Run both files in two separate terminals to run the full project.
+
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
 
 ## Getting Started
